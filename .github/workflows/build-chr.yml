@@ -1,0 +1,82 @@
+name: Build for CHR
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Build frontend
+        run: |
+          pnpm install
+          pnpm build
+          mkdir -p web-dist
+          cp -r cmd/olcrtc-manager/web/dist/* web-dist/
+
+      - name: Build manager binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o olcrtc-manager ./cmd/olcrtc-manager
+
+      - name: Build olcrtc binary from source
+        run: |
+          git clone --depth 1 --branch refactor/universal-carrier https://github.com/openlibrecommunity/olcrtc.git /tmp/olcrtc-src
+          cd /tmp/olcrtc-src
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o olcrtc ./cmd/olcrtc
+          chmod +x olcrtc
+          cp olcrtc $GITHUB_WORKSPACE/olcrtc
+
+      - name: Create Dockerfile
+        run: |
+          cat > Dockerfile << 'EOF'
+          FROM --platform=linux/amd64 alpine:3.19
+          RUN apk add --no-cache ca-certificates
+          COPY olcrtc-manager /usr/local/bin/
+          COPY olcrtc /usr/local/bin/
+          COPY web-dist /web/dist
+          EXPOSE 8888
+          CMD ["/usr/local/bin/olcrtc-manager", "--config", "/etc/olcrtc-manager/config.json"]
+          EOF
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
