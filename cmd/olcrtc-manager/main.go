@@ -2416,36 +2416,64 @@ func runCmd(ctx context.Context, name string, args ...string) error {
 }
 
 func startInstance(ctx context.Context, olcrtcPath string, loc Location) (*process, error) {
-	args := serverArgs(loc)
-	ns, err := setupNetns(ctx, loc)
+	// Создаём временный YAML-файл
+	tmpFile, err := os.CreateTemp("", "olcrtc-*.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("setup netns for %s: %w", locationKey(loc), err)
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	config := map[string]interface{}{
+		"mode":      "srv",
+		"carrier":   loc.Carrier,
+		"transport": loc.Transport.Type,
+		"id":        loc.Endpoint.RoomID,
+		"client-id": loc.ClientID,
+		"key":       loc.Endpoint.Key,
+		"link":      loc.Link,
+		"data":      loc.Data,
+		"dns":       loc.DNS,
 	}
 
-	cmdArgs := append([]string{"netns", "exec", ns.Name, olcrtcPath}, args...)
-	cmd := exec.CommandContext(ctx, "ip", cmdArgs...)
+	encoder := json.NewEncoder(tmpFile)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(config); err != nil {
+		return nil, fmt.Errorf("failed to write config: %w", err)
+	}
+	configPath := tmpFile.Name()
+
+	// Запускаем olcrtc с конфиг-файлом
+	cmd := exec.CommandContext(ctx, olcrtcPath, configPath)
 	logs := newLogBuffer(500)
 	cmd.Stdout = logWriter{stream: "stdout", buffer: logs}
 	cmd.Stderr = logWriter{stream: "stderr", buffer: logs}
 
 	if err := cmd.Start(); err != nil {
-		cleanupNetns(context.Background(), ns)
+		os.Remove(configPath)
 		return nil, fmt.Errorf("start olcrtc for %s: %w", locationKey(loc), err)
 	}
 
-	p := &process{location: loc, cmd: cmd, netns: ns, logs: logs, done: make(chan error, 1), started: time.Now(), running: true}
-	log.Printf("started olcrtc for %s in %s: %s %s", locationKey(loc), ns.Name, olcrtcPath, strings.Join(redactArgs(args), " "))
+	p := &process{
+		location: loc,
+		cmd:      cmd,
+		netns:    &netnsRuntime{},
+		logs:     logs,
+		done:     make(chan error, 1),
+		started:  time.Now(),
+		running:  true,
+	}
+
+	log.Printf("started olcrtc for %s: %s %s", locationKey(loc), olcrtcPath, configPath)
 
 	go func() {
 		err := cmd.Wait()
 		p.markExited(err)
-		cleanupNetns(context.Background(), ns)
+		os.Remove(configPath) // Чистим временный файл
 		p.done <- err
 	}()
 
 	return p, nil
 }
-
 func stopProcess(p *process) {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return
@@ -2647,36 +2675,6 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func serverArgs(loc Location) []string {
-	args := []string{
-		"-mode", "srv",
-		"-carrier", loc.Carrier,
-		"-transport", loc.Transport.Type,
-		"-id", loc.Endpoint.RoomID,
-		"-client-id", loc.ClientID,
-		"-key", loc.Endpoint.Key,
-		"-link", loc.Link,
-		"-data", loc.Data,
-		"-dns", loc.DNS,
-	}
-
-	for _, key := range sortedKeys(loc.Transport.Payload) {
-		args = append(args, "-"+key, loc.Transport.Payload[key])
-	}
-	return args
-}
-
-func redactArgs(args []string) []string {
-	out := append([]string(nil), args...)
-	for i := 0; i < len(out)-1; i++ {
-		if out[i] == "-key" {
-			out[i+1] = "<redacted>"
-			i++
-		}
-	}
-	return out
 }
 
 func subscriptionHandler(supervisor *Supervisor) http.Handler {
