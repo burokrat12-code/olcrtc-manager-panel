@@ -72,11 +72,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (no cache)
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64
           push: true
+          no-cache: true
           tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v5.0.0
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
