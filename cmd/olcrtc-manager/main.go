@@ -2424,15 +2424,22 @@ func startInstance(ctx context.Context, olcrtcPath string, loc Location) (*proce
 	defer tmpFile.Close()
 
 	config := map[string]interface{}{
-		"mode":      "srv",
-		"carrier":   loc.Carrier,
-		"transport": loc.Transport.Type,
-		"id":        loc.Endpoint.RoomID,
-		"client-id": loc.ClientID,
-		"key":       loc.Endpoint.Key,
-		"link":      loc.Link,
-		"data":      loc.Data,
-		"dns":       loc.DNS,
+		"mode": "srv",
+		"auth": map[string]string{
+			"provider": loc.Carrier,
+		},
+		"net": map[string]interface{}{
+			"transport": loc.Transport.Type,
+			"dns":       loc.DNS,
+		},
+		"room": map[string]string{
+			"id": loc.Endpoint.RoomID,
+		},
+		"crypto": map[string]string{
+			"key": loc.Endpoint.Key,
+		},
+		"link": loc.Link,
+		"data": loc.Data,
 	}
 
 	encoder := json.NewEncoder(tmpFile)
@@ -2468,7 +2475,7 @@ func startInstance(ctx context.Context, olcrtcPath string, loc Location) (*proce
 	go func() {
 		err := cmd.Wait()
 		p.markExited(err)
-		os.Remove(configPath) // Чистим временный файл
+		os.Remove(configPath)
 		p.done <- err
 	}()
 
