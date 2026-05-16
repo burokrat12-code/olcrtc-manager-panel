@@ -181,7 +181,7 @@ func run() error {
 	var listenAddr string
 	flag.StringVar(&configPath, "config", "", "path to olcrtc-manager JSON config")
 	flag.IntVar(&port, "port", 0, "HTTP listen port; overrides config.port")
-	flag.StringVar(&listenAddr, "addr", envDefault("OLCRTC_MANAGER_ADDR", "127.0.0.1"), "HTTP listen address")
+	flag.StringVar(&listenAddr, "addr", envDefault("OLCRTC_MANAGER_ADDR", "0.0.0.0"), "HTTP listen address")
 	flag.Parse()
 
 	if configPath == "" {
